@@ -18,6 +18,17 @@ from src.client import *
 from src.clustering import *
 from src.utils import * 
 
+'''
+parse args
+set path for saving, mkdir
+print experiment details
+puts local test set for each client, local_view = True
+partition_data
+get_dataloader
+'''
+# region exp setup, partition data, get dataloader
+'''prep'''
+# region
 args = args_parser()
 
 args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() else 'cpu')
@@ -29,7 +40,7 @@ def mkdirs(dirpath):
         os.makedirs(dirpath)
     except Exception as _:
         pass
-    
+
 path = args.savedir + args.alg + '/' + args.partition + '/' + args.dataset + '/'
 mkdirs(path)
 
@@ -40,26 +51,53 @@ s = template.format(args.alg, args.num_users, args.dataset, args.model, args.par
 print(s)
 
 print(str(args))
+
+# endregion
+'''
+partitioned data (idx)
+'''
+# region
 ##################################### Data partitioning section 
 args.local_view = True
 X_train, y_train, X_test, y_test, net_dataidx_map, net_dataidx_map_test, \
 traindata_cls_counts, testdata_cls_counts = partition_data(args.dataset, 
 args.datadir, args.logdir, args.partition, args.num_users, beta=args.beta, local_view=args.local_view)
-
-train_dl_global, test_dl_global, train_ds_global, test_ds_global = get_dataloader(args.dataset,
-                                                                                   args.datadir,
-                                                                                   args.batch_size,
-                                                                                   32)
+# endregion
+'''
+load data for global model, with default transform
+'''
+# region
+train_dl_global, test_dl_global, \
+    train_ds_global, test_ds_global \
+    = get_dataloader(args.dataset, args.datadir, args.batch_size, 32)
 
 print("len train_ds_global:", len(train_ds_global))
 print("len test_ds_global:", len(test_ds_global))
+# endregion
 
+# endregion
+
+'''
+make list of users_model (clients)
+    init model to args.device based on args.model and args.dataset
+
+if net_i == -1, then it is the global model, set state_dict to init OR load from saved
+else, it is the local model, append to list
+set state_dict to init
+return 
+    list of users_model
+    global_model
+    init state_dict         # for all model
+    server_state_dict       # for global model
+'''
 ################################### build model
 def init_nets(args, dropout_p=0.5):
 
     users_model = []
 
     for net_i in range(-1, args.num_users):
+        # set net
+        
         if args.dataset == "generated":
             net = PerceptronModel().to(args.device)
         elif args.model == "mlp":
@@ -115,7 +153,9 @@ def init_nets(args, dropout_p=0.5):
         else:
             print("not supported yet")
             exit(1)
-        if net_i == -1: 
+            
+        
+        if net_i == -1: # global model
             net_glob = copy.deepcopy(net)
             initial_state_dict = copy.deepcopy(net_glob.state_dict())
             server_state_dict = copy.deepcopy(net_glob.state_dict())
@@ -123,19 +163,15 @@ def init_nets(args, dropout_p=0.5):
                 initial_state_dict = torch.load(args.load_initial)
                 server_state_dict = torch.load(args.load_initial)
                 net_glob.load_state_dict(initial_state_dict)
-        else:
+        else:           # local model
             users_model.append(copy.deepcopy(net))
             users_model[net_i].load_state_dict(initial_state_dict)
-
-#     model_meta_data = []
-#     layer_type = []
-#     for (k, v) in nets[0].state_dict().items():
-#         model_meta_data.append(v.shape)
-#         layer_type.append(k)
 
     return users_model, net_glob, initial_state_dict, server_state_dict
 
 print(f'MODEL: {args.model}, Dataset: {args.dataset}')
+
+# region call init_nets, print model size
 
 users_model, net_glob, initial_state_dict, server_state_dict = init_nets(args, dropout_p=0.5)
 
@@ -180,18 +216,35 @@ print(total)
 # tt = '../initialization/' + 'comm_users.pkl'
 # with open(tt, 'rb') as f:
 #     comm_users = pickle.load(f)
-    
-################################# Initializing Clients 
+
+# endregion
+
+
+################################# Initializing Clients
+
+'''
+for each client
+    get # of data
+    for each class
+        if frac of class >= base + 0.05
+            ratio = count
+        else
+            ratio = frac of class
+        retio = ratio/sum(ratio) * budget
+    round ratio s.t. sum(ratio) = budget
+    save to dict {client: {class: ratio}}
+'''
+# region get traindata_cls_ratio
 traindata_cls_ratio = {}
 
 budget = 20
 for i in range(args.num_users):
-    total_sum = sum(list(traindata_cls_counts[i].values()))
-    base = 1/len(list(traindata_cls_counts[i].values()))
+    total_sum = sum(list(traindata_cls_counts[i].values()))     # # of data
+    base = 1/len(list(traindata_cls_counts[i].values()))        # 1/num of classes
     temp_ratio = {}
     for k in traindata_cls_counts[i].keys():
-        ss = traindata_cls_counts[i][k]/total_sum
-        temp_ratio[k] = (traindata_cls_counts[i][k]/total_sum)
+        ss = traindata_cls_counts[i][k]/total_sum               # frac of class
+        temp_ratio[k] = (traindata_cls_counts[i][k]/total_sum)  
         if ss >= (base + 0.05): 
             temp_ratio[k] = traindata_cls_counts[i][k]
             
@@ -206,7 +259,21 @@ for i in range(args.num_users):
         cnt+=1
         
     traindata_cls_ratio[i] = temp_ratio  
-    
+
+# endregion
+
+
+'''
+K, # of basis
+for each client
+    load local train test data with noise_level and dataidx
+    get local idx, sort idx label by label
+    for each class
+        get basis with SVD
+    append basis for all classes to  list
+    append model with data (Client_ClusterFL) to list
+'''
+# region get client basis, wrap model and data for each client
 clients = []
 U_clients = []
 
@@ -227,17 +294,21 @@ for idx in range(args.num_users):
         noise_level = 0
 
     if args.noise_type == 'space':
-        train_dl_local, test_dl_local, train_ds_local, test_ds_local = get_dataloader(args.dataset, 
-                                                                       args.datadir, args.local_bs, 32, 
-                                                                       dataidxs, noise_level, idx, 
-                                                                       args.num_users-1, 
-                                                                       dataidxs_test=dataidxs_test)
+        train_dl_local, test_dl_local, \
+            train_ds_local, test_ds_local \
+            = get_dataloader(args.dataset, 
+                            args.datadir, args.local_bs, 32, 
+                            dataidxs, noise_level, idx, 
+                            args.num_users-1, 
+                            dataidxs_test=dataidxs_test)
     else:
         noise_level = args.noise / (args.num_users - 1) * idx
-        train_dl_local, test_dl_local, train_ds_local, test_ds_local = get_dataloader(args.dataset, 
-                                                                       args.datadir, args.local_bs, 32, 
-                                                                       dataidxs, noise_level, 
-                                                                       dataidxs_test=dataidxs_test)
+        train_dl_local, test_dl_local, \
+            train_ds_local, test_ds_local \
+            = get_dataloader(args.dataset, 
+                            args.datadir, args.local_bs, 32, 
+                            dataidxs, noise_level, 
+                            dataidxs_test=dataidxs_test)
     idxs_local = np.arange(len(train_ds_local.data))
     labels_local = np.array(train_ds_local.target)
     # Sort Labels Train 
@@ -285,7 +356,17 @@ for idx in range(args.num_users):
     
     clients.append(Client_ClusterFL(idx, copy.deepcopy(users_model[idx]), args.local_bs, args.local_ep, 
                args.lr, args.momentum, args.device, train_dl_local, test_dl_local))
-    
+
+# endregion
+
+
+
+'''
+get adjacency matrix for all clients
+get clusters, list of list of clients
+get clients_clust_id, {client_id: cluster_id}
+'''
+# region Clustering
 ###################################### Clustering  
 np.set_printoptions(precision=2)
 #m = max(int(args.frac * args.num_users), 1)
@@ -323,12 +404,32 @@ for i in range(args.num_users):
             break
 print(f'Clients: Cluster_ID \n{clients_clust_id}')
 
+# endregion
+
+
+
+'''
+FL Training
+w_glob_per_cluster, 1 global model per cluster
+for each round
+    choose a set of rnd clients
+    for each client
+        append client id to cluster dict {cluster: [client]}
+        load weights from global model, test
+        train client model, test
+    get total amount of data
+    get cluster data fraction
+    for each cluster
+        fedavg for global model, test on global data
+    print, garbage collect
+'''
 ###################################### Federation 
 
+# region FL prep
 loss_train = []
 
-init_tracc_pr = []  # initial train accuracy for each round 
-final_tracc_pr = [] # final train accuracy for each round 
+# init_tracc_pr = []  # initial train accuracy for each round 
+# final_tracc_pr = [] # final train accuracy for each round 
 
 init_tacc_pr = []  # initial test accuarcy for each round 
 final_tacc_pr = [] # final test accuracy for each round
@@ -353,6 +454,8 @@ w_glob_per_cluster = [copy.deepcopy(initial_state_dict) for _ in range(len(clust
 users_best_acc = [0 for _ in range(args.num_users)]
 best_glob_acc = [0 for _ in range(len(clusters))]
 
+# endregion
+
 print_flag = False
 for iteration in range(args.rounds):
         
@@ -368,7 +471,8 @@ for iteration in range(args.rounds):
     for idx in idxs_users:
         idx_cluster = clients_clust_id[idx]
         idx_clusters_round[idx_cluster] = []
-        
+    
+    # FL train
     for idx in idxs_users:
         idx_cluster = clients_clust_id[idx]
         idx_clusters_round[idx_cluster].append(idx)
@@ -391,6 +495,7 @@ for iteration in range(args.rounds):
         
         final_local_tacc.append(acc)
         final_local_tloss.append(loss)           
+    
     
     total_data_points = {}
     for k in idx_clusters_round.keys(): 
@@ -509,6 +614,16 @@ for iteration in range(args.rounds):
     
 # with open(path+str(args.trial)+'_best_glob_w.pt', 'wb') as fp:
 #     torch.save(best_glob_w, fp)
+
+
+
+
+'''
+Printing Final Test and Train ACC / LOSS
+for each client
+    test on local test train
+printing...
+'''
 ############################### Printing Final Test and Train ACC / LOSS
 test_loss = []
 test_acc = []

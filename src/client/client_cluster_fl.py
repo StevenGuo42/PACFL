@@ -5,6 +5,10 @@ import torch
 from torch import nn, optim
 import torch.nn.functional as F
 
+
+'''
+wrap model and data for each client
+'''
 class Client_ClusterFL(object):
     def __init__(self, name, model, local_bs, local_ep, lr, momentum, device, 
                  train_dl_local = None, test_dl_local = None):
@@ -45,10 +49,10 @@ class Client_ClusterFL(object):
                 
             epoch_loss.append(sum(batch_loss)/len(batch_loss))
             
-#         if self.save_best: 
-#             _, acc = self.eval_test()
-#             if acc > self.acc_best:
-#                 self.acc_best = acc 
+        # if self.save_best: 
+        #     _, acc = self.eval_test()
+        #     if acc > self.acc_best:
+        #         self.acc_best = acc 
         
         return sum(epoch_loss) / len(epoch_loss)
     

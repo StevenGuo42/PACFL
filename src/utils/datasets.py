@@ -50,6 +50,8 @@ def default_loader(path):
     else:
         return pil_loader(path)
 
+###################################################################################
+
 class CustomTensorDataset(data.TensorDataset):
     def __getitem__(self, index):
         return tuple(tensor[index] for tensor in self.tensors) + (index,)
@@ -107,7 +109,6 @@ class USPS_truncated(data.Dataset):
 
     def __len__(self):
         return len(self.data)
-    
     
 class MNIST_truncated(data.Dataset):
 
@@ -400,6 +401,7 @@ class ImageFolder_custom(DatasetFolder):
         
 # torchvision CelebA
 class CelebA_custom(VisionDataset):
+    
     """`Large-scale CelebFaces Attributes (CelebA) Dataset <http://mmlab.ie.cuhk.edu.hk/projects/CelebA.html>`_ Dataset.
 
     Args:
@@ -458,9 +460,9 @@ class CelebA_custom(VisionDataset):
         if download:
             self.download()
 
-#         if not self._check_integrity():
-#             raise RuntimeError('Dataset not found or corrupted.' +
-#                                ' You can use download=True to download it')
+        # if not self._check_integrity():
+        #     raise RuntimeError('Dataset not found or corrupted.' +
+        #                        ' You can use download=True to download it')
 
         split_map = {
             "train": 0,
@@ -750,6 +752,7 @@ class CIFAR100_truncated(data.Dataset):
     def __len__(self):
         return len(self.data)
     
+###################################################################################
 
 def gen_bar_updater() -> Callable[[int, int, int], None]:
     pbar = tqdm(total=None)
@@ -761,7 +764,6 @@ def gen_bar_updater() -> Callable[[int, int, int], None]:
         pbar.update(progress_bytes - pbar.n)
 
     return bar_update
-
 
 def download_url(url: str, root: str, filename: Optional[str] = None, md5: Optional[str] = None) -> None:
     """Download a file from a url and place it in root.
@@ -808,26 +810,20 @@ def download_url(url: str, root: str, filename: Optional[str] = None, md5: Optio
 def _is_tarxz(filename: str) -> bool:
     return filename.endswith(".tar.xz")
 
-
 def _is_tar(filename: str) -> bool:
     return filename.endswith(".tar")
-
 
 def _is_targz(filename: str) -> bool:
     return filename.endswith(".tar.gz")
 
-
 def _is_tgz(filename: str) -> bool:
     return filename.endswith(".tgz")
-
 
 def _is_gzip(filename: str) -> bool:
     return filename.endswith(".gz") and not filename.endswith(".tar.gz")
 
-
 def _is_zip(filename: str) -> bool:
     return filename.endswith(".zip")
-
 
 def extract_archive(from_path: str, to_path: Optional[str] = None, remove_finished: bool = False) -> None:
     if to_path is None:
@@ -855,15 +851,14 @@ def extract_archive(from_path: str, to_path: Optional[str] = None, remove_finish
     if remove_finished:
         os.remove(from_path)
 
-
 def download_and_extract_archive(
-    url: str,
-    download_root: str,
-    extract_root: Optional[str] = None,
-    filename: Optional[str] = None,
-    md5: Optional[str] = None,
-    remove_finished: bool = False,
-) -> None:
+        url: str,
+        download_root: str,
+        extract_root: Optional[str] = None,
+        filename: Optional[str] = None,
+        md5: Optional[str] = None,
+        remove_finished: bool = False,
+    ) -> None:
     download_root = os.path.expanduser(download_root)
     if extract_root is None:
         extract_root = download_root
@@ -875,6 +870,8 @@ def download_and_extract_archive(
     archive = os.path.join(download_root, filename)
     print("Extracting {} to {}".format(archive, extract_root))
     extract_archive(archive, extract_root, remove_finished)
+
+###################################################################################
 
 class FEMNIST(MNIST):
     """
@@ -944,7 +941,6 @@ class FEMNIST(MNIST):
     def __len__(self):
         return len(self.data)
 
-
 class Generated(MNIST):
 
     def __init__(self, root, dataidxs=None, train=True, transform=None, target_transform=None,
@@ -972,8 +968,6 @@ class Generated(MNIST):
 
     def __len__(self):
         return len(self.data)
-
-
 
 class genData(MNIST):
     def __init__(self, data, targets):

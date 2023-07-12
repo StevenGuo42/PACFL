@@ -28,7 +28,7 @@ Please follow the paper to modify the scripts for more experiments. You may chan
 The descriptions of parameters are as follows:
 | Parameter | Description |
 | --------- | ----------- |
-| ntrials      | The number of total runs. |
+| trial      | The number of total runs. |
 | rounds       | The number of communication rounds per run. |
 | num_users    | The number of clients. |
 | frac         | The sampling rate of clients for each round. |

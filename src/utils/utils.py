@@ -205,6 +205,10 @@ def load_femnist_data(datadir):
 
     return (X_train, y_train, u_train, X_test, y_test, u_test)
 
+'''
+for each each client, get assigned classes and # of samples for each class
+{client: {class: count}}
+'''
 def record_net_data_stats(y_train, net_dataidx_map, logdir):
     net_cls_counts = {}
 
@@ -217,10 +221,24 @@ def record_net_data_stats(y_train, net_dataidx_map, logdir):
 
     return net_cls_counts
 
+
+'''
+partition data
+return:
+    X_train, y_train, X_test, y_test,               # data
+    net_dataidx_map, net_dataidx_map_test,          # data idx to client mapping
+    traindata_cls_counts, testdata_cls_counts       # class counts for each client
+
+'''
 def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4, local_view=False):
     #np.random.seed(2020)
     #torch.manual_seed(2020)
 
+    '''
+    load train test data, based on dataset name
+    '''
+    # region 
+    
     if dataset == 'mnist':
         X_train, y_train, X_test, y_test = load_mnist_data(datadir)
     elif data == 'mnist_rotated':
@@ -338,13 +356,40 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4, loc
         np.save("data/generated/y_train.npy",y_train)
         np.save("data/generated/y_test.npy",y_test)
 
+    # endregion
+    
+    '''
+    partition data into n_parties based on partition method
+        net_dataidx_map: {client_id: [data indices]}
+    '''
+    # region
+    
     n_train = y_train.shape[0]
 
+    #     'homo'
+    # shuffle, split to n_client (n_parties)
     if partition == "homo":
         idxs = np.random.permutation(n_train)
         batch_idxs = np.array_split(idxs, n_parties)
         net_dataidx_map = {i: batch_idxs[i] for i in range(n_parties)}
 
+    #     'noniid-labeldir'
+    #     dirichlet dist partition
+    # for each label, partition data with dirichlet for client
+    # ignore clients with enough data, assign;
+    # repeat until at least 10 data for each
+    
+        # K, n_classes; N, data len
+        # for min_size < min_require_size
+        #     init empty idx_batch
+        #     for each label
+        #         get proportions for each client using dirichlet
+        #         if assigned > N/n_client
+        #             set to 0
+        #         rescale proportion
+        #         split by proportion, assign
+        #         get min_size of clients
+    
     elif partition == "noniid-labeldir":
         min_size = 0
         min_require_size = 10
@@ -387,7 +432,14 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4, loc
         for j in range(n_parties):
             np.random.shuffle(idx_batch[j])
             net_dataidx_map[j] = idx_batch[j]
-
+    
+    #     'noniid-#label0' ~ 'noniid-#label9'
+    #     each client has 'n' labels
+    # K, n_classes; num (n), # of labels per client (from string)
+    # if n=10: for each label, random shuffle, split to n_client (n_parties) 
+    # else: 
+    #     for each client, record # of times a label is assigned total and get n classes assigned to each client
+    #     for each label, random shuffle, split to by # of times assigned, assign to client with this label
     elif partition > "noniid-#label0" and partition <= "noniid-#label9":
         num = eval(partition[13:])
         if dataset in ('celeba', 'covtype', 'a9a', 'rcv1', 'SUSY'):
@@ -433,6 +485,10 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4, loc
                     if i in contain[j]:
                         net_dataidx_map[j]=np.append(net_dataidx_map[j],split[ids])
                         ids+=1
+    
+
+    #     'noniid1-#label0' ~ 'noniid1-#label9'
+    #     modified non-iid noniid-#label, more diversed
     elif partition > "noniid1-#label0" and partition <= "noniid1-#label9":
         print('Modified Non-IID partitioning')
         num = eval(partition[14:])
@@ -508,7 +564,10 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4, loc
                     if i in contain[j]:
                         net_dataidx_map[j]=np.append(net_dataidx_map[j],split[ids])
                         ids+=1
-        
+    
+
+    #     'iid-diff-quantity'
+    # partition with dirichlet, with min size 10, client with different size
     elif partition == "iid-diff-quantity":
         idxs = np.random.permutation(n_train)
         min_size = 0
@@ -520,6 +579,9 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4, loc
         batch_idxs = np.split(idxs,proportions)
         net_dataidx_map = {i: batch_idxs[i] for i in range(n_parties)}
 
+
+    #     'real' and 'femnist'
+    # partition with user group from dataset
     elif partition == "real" and dataset == "femnist":
         num_user = u_train.shape[0]
         user = np.zeros(num_user+1,dtype=np.int32)
@@ -532,10 +594,19 @@ def partition_data(dataset, datadir, logdir, partition, n_parties, beta=0.4, loc
             for j in batch_idxs[i]:
                 net_dataidx_map[i]=np.append(net_dataidx_map[i], np.arange(user[j], user[j+1]))
     
+    # endregion
+    
+    
     print(f'partition: {partition}')
     traindata_cls_counts = record_net_data_stats(y_train, net_dataidx_map, logdir)
     print('Data statistics Train:\n %s \n' % str(traindata_cls_counts))
     
+    '''
+    if local_view:
+        if class assigned for train, also assign for test
+    else:
+        no test set
+    '''
     if local_view:
         net_dataidx_map_test = {i: [] for i in range(n_parties)}
         for k_id, stat in traindata_cls_counts.items():
@@ -643,6 +714,17 @@ class AddGaussianNoise(object):
     def __repr__(self):
         return self.__class__.__name__ + '(mean={0}, std={1})'.format(self.mean, self.std)
 
+''' 
+load dataset from datadir
+input:  
+    dataset, datadir, train_bs, test_bs,            # data, batch size
+    dataidxs,                                       # for tinyimagenet
+    noise_level, net_id, total,                     # for gaussian noise
+    dataidxs_test,                                  # for rotated
+    same_size,                                      # mnist padding
+    target_transform,                               # 
+    rotation                                        # for rotated dataset
+'''
 def get_dataloader(dataset, datadir, train_bs, test_bs, dataidxs=None, noise_level=0, net_id=None, total=0, dataidxs_test=None,
                   same_size=False, target_transform=None, rotation=0):
     if dataset in ('mnist', 'mnist_rotated', 'femnist', 'fmnist', 'cifar10', 'cifar10_rotated', 'cifar100',

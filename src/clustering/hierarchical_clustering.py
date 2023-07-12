@@ -103,6 +103,9 @@ def error_gen(actual, rounded):
     divisor = np.sqrt(1.0 if actual < 1.0 else actual)
     return abs(rounded - actual) ** 2 / divisor
 
+'''
+list of percents, rounds to the nearest integer s.t. sum = budget
+'''
 def round_to(percents, budget=100):
     if not np.isclose(sum(percents), budget):
         raise ValueError
